@@ -30,9 +30,10 @@
    "Is meant to be called if the cache is determined to contain a value
    associated with `e`")
   (miss    [cache e ret]
+           [cache e ret opts]
    "Is meant to be called if the cache is determined to **not** contain a
    value associated with `e`")
-  (evict  [cache e]
+  (evict   [cache e]
    "Removes an entry from the cache")
   (seed    [cache base]
    "Is used to signal that the cache should be created with a seed.
@@ -108,6 +109,8 @@
   (hit [this item] this)
   (miss [_ item result]
     (BasicCache. (assoc cache item result)))
+  (miss [this item result _]
+    (miss this item result))
   (evict [_ key]
     (BasicCache. (dissoc cache key)))
   (seed [_ base]
@@ -131,6 +134,8 @@
   (hit [this item] this)
   (miss [_ item result]
     (BasicCache. (assoc cache item result)))
+  (miss [this item result _]
+    (miss this item result))
   (evict [_ key]
     (BasicCache. (dissoc cache key)))
   (seed [_ base]
@@ -175,6 +180,8 @@
       (FIFOCache. (assoc kache item result)
                   (concat qq [item])
                   limit)))
+  (miss [this item result _]
+    (miss this item result))
   (evict [this key]
     (let [v (get cache key ::miss)]
       (if (= v ::miss)
@@ -228,6 +235,8 @@
                    (assoc lru item tick+)
                    tick+
                    limit))))
+  (miss [this item result _]
+    (miss this item result))
   (evict [this key]
     (let [v (get cache key ::miss)]
       (if (= v ::miss)
@@ -247,12 +256,12 @@
 
 
 (defn- key-killer
-  [ttl expiry now]
-  (let [ks (map key (filter #(> (- now (val %)) expiry) ttl))]
+  [ttl now]
+  (let [ks (map key (filter #(> (- now (:timestamp (val %))) (:ttl (val %))) ttl))]
     #(apply dissoc % ks)))
 
 
-(defcache TTLCache [cache ttl ttl-ms]
+(defcache TTLCache [cache ttl-entries default-ttl-ms]
   CacheProtocol
   (lookup [this item]
     (let [ret (lookup this item ::nope)]
@@ -262,29 +271,33 @@
       (get cache item)
       not-found))
   (has? [_ item]
-    (let [t (get ttl item (- ttl-ms))]
-      (< (- (System/currentTimeMillis)
+    (let [now (System/currentTimeMillis)
+          {ttl :ttl t :timestamp} (get ttl-entries item {:ttl (- default-ttl-ms) :timestamp now})]
+      (< (- now
             t)
-         ttl-ms)))
+         ttl)))
   (hit [this item] this)
   (miss [this item result]
-    (let [now  (System/currentTimeMillis)
-          kill-old (key-killer ttl ttl-ms now)]
+    (miss this item result {}))
+  (miss [this item result options]
+    (let [ttl (if (:ttl options) (:ttl options) default-ttl-ms)
+          now  (System/currentTimeMillis)
+          kill-old (key-killer ttl-entries now)]
       (TTLCache. (assoc (kill-old cache) item result)
-                 (assoc (kill-old ttl) item now)
-                 ttl-ms)))
+                 (assoc (kill-old ttl-entries) item {:timestamp now :ttl ttl})
+                 default-ttl-ms)))
   (seed [_ base]
     (let [now (System/currentTimeMillis)]
       (TTLCache. base
-                 (into {} (for [x base] [(key x) now]))
-                 ttl-ms)))
+                 (into {} (for [x base] [(key x) {:ttl default-ttl-ms :timestamp now}]))
+                 default-ttl-ms)))
   (evict [_ key]
     (TTLCache. (dissoc cache key)
-               (dissoc ttl key)
-               ttl-ms))
+               (dissoc ttl-entries key)
+               default-ttl-ms))
   Object
   (toString [_]
-    (str cache \, \space ttl \, \space ttl-ms)))
+    (str cache \, \space ttl-entries \, \space default-ttl-ms)))
 
 
 (defcache LUCache [cache lu limit]
@@ -308,6 +321,8 @@
       (LUCache. (assoc cache item result)  ;; no change case
                 (assoc lu item 0)
                 limit)))
+  (miss [this item result _]
+    (miss this item result))
   (evict [this key]
     (let [v (get cache key ::miss)]
       (if (= v ::miss)
@@ -470,6 +485,8 @@
                         tick+
                         limitS
                         limitQ))))))
+  (miss [this item result _]
+    (miss this item result))
   (seed [_ base]
     (LIRSCache. base
                 (into {} (for [x (range (- limitS) 0)] [x x]))
@@ -524,6 +541,8 @@
       (.put rcache r item)
       (clear-soft-cache! cache rcache rq)
       this))
+  (miss [this item result _]
+    (miss this item result))
   (evict [this key]
     (let [key (or key ::nil)
           r (get cache key)]

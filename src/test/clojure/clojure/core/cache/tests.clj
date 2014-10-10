@@ -53,7 +53,7 @@
        (get c :e 0) 0
        (get c :b 0) 2
        (get c :f 0) nil
-       
+
        (get-in c [:c :e]) 4
        (get-in c '(:c :e)) 4
        (get-in c [:c :x]) nil
@@ -62,7 +62,7 @@
        (get-in c [:h]) nil
        (get-in c []) c
        (get-in c nil) c
-       
+
        (get-in c [:c :e] 0) 4
        (get-in c '(:c :e) 0) 4
        (get-in c [:c :x] 0) 0
@@ -198,16 +198,17 @@
 (defn sleepy [e t] (Thread/sleep t) e)
 
 (deftest test-ttl-cache-ilookup
-  (let [five-secs (+ 5000 (System/currentTimeMillis))
-        big-time   (into {} (for [[k _] big-map] [k five-secs]))
-        small-time (into {} (for [[k _] small-map] [k five-secs]))]
+  (let [now (System/currentTimeMillis)
+        five-secs (+ 5000 now)
+        big-time   (into {} (for [[k _] big-map] [k {:ttl five-secs :timestamp now}]))
+        small-time (into {} (for [[k _] small-map] [k {:ttl five-secs :timestamp now}]))]
     (testing "that the TTLCache can lookup via keywords"
       (do-ilookup-tests (TTLCache. small-map small-time 2000)))
     (testing "that the TTLCache can lookup via keywords"
       (do-dot-lookup-tests (TTLCache. small-map small-time 2000)))
     (testing "assoc and dissoc for TTLCache"
       (do-assoc (TTLCache. {} {} 2000))
-      (do-dissoc (TTLCache. {:a 1 :b 2} {:a five-secs :b five-secs} 2000)))
+      (do-dissoc (TTLCache. {:a 1 :b 2} {:a {:ttl five-secs :timestamp now} :b {:ttl five-secs :timestamp now}} 2000)))
     (testing "that get and cascading gets work for TTLCache"
       (do-getting (TTLCache. big-map big-time 2000)))
     (testing "that finding works for TTLCache"
@@ -223,7 +224,10 @@
            {:c 3} (-> C (assoc :a 1) (assoc :b 2) (sleepy 700) (assoc :c 3) .cache))))
   (testing "TTL cache does not return a value that has expired."
     (let [C (ttl-cache-factory {} :ttl 500)]
-      (is (nil? (-> C (assoc :a 1) (sleepy 700) (lookup :a)))))))
+      (is (nil? (-> C (assoc :a 1) (sleepy 700) (lookup :a))))))
+  (testing "Setting a specific TTL on a cache miss."
+    (let [C (ttl-cache-factory {} :ttl 500)]
+      (is (= 1 (-> C (miss :a 1 {:ttl 1000}) (sleepy 700) (lookup :a)))))))
 
 (deftest test-lu-cache-ilookup
   (testing "that the LUCache can lookup via keywords"
